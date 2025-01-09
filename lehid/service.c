@@ -83,6 +83,11 @@ int attach_service(int s, int device_id )
 	int error;
 	const void *ptr;
 	struct default_service *dfs;
+	/*
+	 * FIXME: This looks like an extremely hacky way to iterate drivers.
+	 * Who guarantees that all service_driver structs are consecutively in
+	 * memory between __start_driver and __stop_driver?
+	 */
 	extern struct service_driver __start_driver;
 	extern struct service_driver __stop_driver;  
 	struct service_driver *it;

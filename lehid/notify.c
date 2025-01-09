@@ -63,7 +63,12 @@ int register_notify(int cid, struct service *serv, int s)
 	d->property = sqlite3_column_int(queryhandle, 1);
 
 	sqlite3_reset(queryhandle);
-	
+
+	/*
+	 * NOTE: This will write the CCCD (0x2902) attribute (by its handly of course)
+	 * that __belongs__ to the characteristics attibute, we try to subscribe to.
+	 * The notifications will contain the handle of the characteristics attribute, though.
+	 */
 	buf[0] = ((d->property&GATT_PERM_NOTIFY)?1:0)|
 		((d->property&GATT_PERM_INDICATE)?2:0);
 	buf[1] = 0;

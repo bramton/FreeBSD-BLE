@@ -286,14 +286,23 @@ int le_att_read(int s, int attribute_id, unsigned char *buf, size_t len,int noca
 	
 }
 
+/**
+ * Get the attribute id of the CCCD attribute __after__ (and therefore
+ * belonging to) the characteristics attribute given in chara_id.
+ * descid should always be 0x2902.
+ *
+ * @todo Perhaps we could get rid of low/high_attribute_id in the schema with these
+ * heuristics. Or there is a more reliable way to find the CCCD attribute.
+ */
 int chardesc_to_attr(int chara_id, uuid_t *descid)
 {
 	int attr_id;
 	static sqlite3_stmt *stmt;
 	if(stmt == NULL)
-		stmt = get_stmt("SELECT attribute_id FROM ble_attribute , (SELECT low_attribute_id, high_attribute_id from ble_chara WHERE chara_id=$1) AS c WHERE (attribute_id BETWEEN c.low_attribute_id AND c.high_attribute_id) AND uuid = $2 ;");
-	sqlite3_bind_int(stmt, 1 , chara_id);
-	my_bind_uuid(stmt, 2, descid);
+		stmt = get_stmt("SELECT attribute_id FROM ble_attribute "
+		                "WHERE uuid=$1 and attribute_id > (SELECT value_attribute_id FROM ble_chara WHERE chara_id = $2);");
+	my_bind_uuid(stmt, 1, descid);
+	sqlite3_bind_int(stmt, 2, chara_id);
 	attr_id = -1;
 	if(sqlite3_step(stmt) == SQLITE_ROW){
 		attr_id =sqlite3_column_int(stmt, 0);
