@@ -261,7 +261,7 @@ int le_smpconnect(bdaddr_t *bd,int hci, int israndom)
 		  }else if(iocapmat[pres.iocap][preq.iocap]== -1){
 		    pin = arc4random()%999999;
 		  }
-		  printf("PIN:%u %x\n", pin, pin);
+		  fprintf(stderr, "PIN:%u %x\n", pin, pin);
 		}
 		bzero(k, sizeof(k));
 		k[15] = pin&0xff;
@@ -376,16 +376,16 @@ int le_smpconnect(bdaddr_t *bd,int hci, int israndom)
 				arc4random_buf(&mi.rand, sizeof(mi.rand));
 				mi.code = NG_L2CAP_SMP_MASTERINFO;
 				write(s, &mi, sizeof(mi));
+
+#if 0
 				sleep(4);
 				cp.connection_handle = handle;
-
-
 				n = sizeof(cp);
 				hci_request(hci, NG_HCI_OPCODE(NG_HCI_OGF_LE
 							       ,NG_HCI_OCF_LE_START_ENCRYPTION),
 					    (char *)&cp, sizeof(cp), (char *)&rp, &n);
 				sleep(30);
-				
+#endif
 			}
 			
 				
