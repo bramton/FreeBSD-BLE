@@ -8,7 +8,7 @@
 	.node = { 0xD5, 0xE9, 0x74, 0xE3, 0x2A, 0x54}	\
 }
 
-inline void omron_id(uint16_t x, uuid_t *u)
+static inline void omron_id(uint16_t x, uuid_t *u)
 {
     const uuid_t b = OMRONID(0);
     *u = b;
