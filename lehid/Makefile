@@ -27,6 +27,7 @@ SRCS+= service.c
 SRCS+= servicename.c
 SRCS+= sql.c
 SRCS+= uuid.c
+SRCS+= btuinput.c
 #SRCS+= microbit-accel.c
 
 LDADD=-lbluetooth -lcrypto -lusbhid -lsqlite3

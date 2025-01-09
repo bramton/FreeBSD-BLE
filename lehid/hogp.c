@@ -90,6 +90,7 @@
 #include <usbhid.h>
 #include <dev/usb/usbhid.h>
 #include "uuidbt.h"
+#include "btuinput.h"
 #include "hogp.h"
 
 
@@ -116,6 +117,8 @@ struct hogp_service{
 	report_desc_t desc;
 	int nrmap;
 	int cons;
+	int32_t umouse;
+	int32_t obuttons;
 	struct hogp_ridmap rmap[MAXRIDMAP];
 };
 
@@ -287,8 +290,28 @@ void hogp_init(struct service *service, int s)
 	}
 	printf("HID Version:%x Country Code %d FLAG:%x\n", buf[0]|(buf[1]<<8),
 	       buf[2], buf[3]);
+
 	serv->cons = open("/dev/consolectl", O_RDWR);
 	printf("%d\n", serv->cons);
+
+	// FIXME: A lot more could be queried
+	hid_device_t device = {
+		/*
+		 * FIXME: Can be extracted from ble_device.addr
+		 */
+		.bdaddr = {0},
+		.name = NULL,
+		.version = buf[0]|(buf[1]<<8),
+		.mouse = 1,
+		.has_wheel = 1
+	};
+	bdaddr_t local_bdaddr = {0}; // FIXME
+	serv->umouse = uinput_open_mouse(&device, &local_bdaddr);
+	if(serv->umouse < 0){
+		fprintf(stderr, "Cannot open uinput mouse\n");
+	}
+	serv->obuttons = 0;
+
 	btuuid16(HID_REPORT_MAP, &uuid);	
 	sqlite3_bind_int(stmt, 1, service->service_id);
 	my_bind_uuid(stmt, 2, &uuid);
@@ -321,7 +344,7 @@ void hogp_init(struct service *service, int s)
 		serv->rmap[serv->nrmap].cid = cid;
 		serv->rmap[serv->nrmap].rid = buf[0];
 		report_type = serv->rmap[serv->nrmap].type = buf[1];		
-		printf("CharID: %x ReportID:%d ReportType%d\n", cid,
+		printf("CharID: %x ReportID:%d ReportType:%d\n", cid,
 		       buf[0], buf[1]);
 		serv->nrmap++;
 		if(report_type == 1){
@@ -423,7 +446,7 @@ void hogp_process_report(struct hogp_service *serv, unsigned char *buf)
 					usage = 3;
 				else if (usage == 3)
 					usage = 2;
-				
+
 				mouse_butt |= (val << (usage - 1));
 				mevents ++;
 			}
@@ -558,22 +581,51 @@ void hogp_process_report(struct hogp_service *serv, unsigned char *buf)
 	if (mevents > 0) {
 		struct mouse_info	mi;
 
+		memset(&mi, 0, sizeof(mi));
 		mi.operation = MOUSE_ACTION;
 		mi.u.data.x = mouse_x;
 		mi.u.data.y = mouse_y;
 		mi.u.data.z = mouse_z;
+		/*
+		 * FIXME: Clicks are still broken in the vt console.
+		 * MOUSE_BUTTON_EVENT (see below) doesn't help much either.
+		 */
 		mi.u.data.buttons = mouse_butt;
 
 		if (ioctl(serv->cons, CONS_MOUSECTL, &mi) < 0)
 			fprintf(stderr, "%s %d\n",
 				strerror(errno), errno);
+
+#if 0
+		if(mouse_butt){
+			memset(&mi, 0, sizeof(mi));
+			mi.operation = MOUSE_BUTTON_EVENT;
+			for(int i = 0; i < MOUSE_MAXBUTTON; i++){
+				mi.u.event.id = 1 << i;
+				mi.u.event.value = mouse_butt & mi.u.event.id ? 1 : 0;
+				if((mouse_butt ^ serv->obuttons) & mi.u.event.id &&
+				   ioctl(serv->cons, CONS_MOUSECTL, &mi) < 0){
+					fprintf(stderr, "%s %d\n",
+						strerror(errno), errno);
+				}
+			}
+		}
+#endif
+
+		if(serv->umouse > 0 &&
+		   uinput_rep_mouse(serv->umouse, mouse_x, mouse_y, mouse_z, 0, mouse_butt, serv->obuttons)){
+			fprintf(stderr, "Cannot report mouse coordinates\n");
+		}
+		serv->obuttons = mouse_butt;
+
+//		printf("Mouse event: %d %d %d\n",
+//		       mouse_x, mouse_y, mouse_z);
 	}
 
 	
 }
 void hogp_notify(void *sc, int charid, unsigned char *buf, size_t len)
 {
-
 	int i;
 	struct hogp_service *serv = sc;
 	int rid;
