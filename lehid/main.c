@@ -44,6 +44,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <uuid.h>
@@ -73,11 +74,16 @@ void probe_service(int s, int device_id)
 	uuid_t srvuuid;
 	int len;
 	unsigned char buf[40];
+	bool uuid_set = false;
 	
 	iter_serv = get_stmt("SELECT service_id,low_attribute_id FROM ble_service where device_id =$1;");
 	update_serv = get_stmt("UPDATE ble_service SET uuid = $1 WHERE service_id = $2;");
 	sqlite3_bind_int(iter_serv, 1, device_id);
 	while(sqlite3_step(iter_serv)==SQLITE_ROW){
+		/*
+		 * NOTE: There won't be any ble_service entry without an 0x2800 attribute,
+		 * which will be first and should return the service's UUID.
+		 */
 		service_id = sqlite3_column_int(iter_serv, 0);
 		request_id = sqlite3_column_int(iter_serv, 1);
 		len = le_att_read(s,request_id, buf, sizeof(buf), 0);
@@ -86,11 +92,27 @@ void probe_service(int s, int device_id)
 		sqlite3_bind_int(update_serv, 2, service_id);
 		sqlite3_step(update_serv);
 		sqlite3_reset(update_serv);
+		uuid_set = true;
 	}
 	sqlite3_finalize(update_serv);
 	sqlite3_finalize(iter_serv);
 
+	if(uuid_set){
+		return;
+	}
 
+	/*
+	 * If there wasn't any service yet, it might still be a HOGP (HID) device.
+	 * If there is a HID Information attribute, just assume it's a 0x1812.
+	 *
+	 * FIXME: "Read by Group Type" should also be supported.
+	 * See Linux log, frame 41.
+	 */
+	update_serv = get_stmt("INSERT INTO ble_service (device_id, uuid) "
+	                       "SELECT device_id, btuuid16(0x1812) FROM ble_attribute WHERE device_id=$1 AND uuid=btuuid16(0x2A4B);");
+	sqlite3_bind_int(update_serv, 1, device_id);
+	sqlite3_step(update_serv);
+	sqlite3_finalize(update_serv);
 }
 void probe_include(int s, int device_id)
 {
@@ -132,6 +154,8 @@ void probe_chara(int s, int device_id)
 	uuid_t srvuuid;
 	int len;
 	int prop;
+	bool uuid_set = false;
+
 	iter_chara = get_stmt("SELECT chara_id,low_attribute_id FROM ble_chara INNER JOIN ble_attribute on low_attribute_id=ble_attribute.attribute_id  where device_id =$1;");
 	update_chara = get_stmt("UPDATE ble_chara SET uuid = $1, property = $2, value_attribute_id = (SELECT attribute_id FROM ble_attribute where handle = $3 and device_id = $4 ) WHERE chara_id = $5;");
 	sqlite3_bind_int(iter_chara, 1, device_id);
@@ -151,12 +175,37 @@ void probe_chara(int s, int device_id)
 		sqlite3_bind_int(update_chara, 5, chara_id);
 		sqlite3_step(update_chara);
 		sqlite3_reset(update_chara);
+		uuid_set = true;
 	}
 	sqlite3_finalize(update_chara);
 	sqlite3_finalize(iter_chara);
 
+	if(uuid_set){
+		return;
+	}
 
+	/*
+	 * If there wasn't any characteristic yet, it might still be a HOGP (HID) device.
+	 */
+	update_chara = get_stmt("INSERT INTO ble_chara (service_id, value_attribute_id, uuid, property) "
+	                        "SELECT (SELECT max(service_id) FROM ble_service WHERE device_id=$1), attribute_id, uuid, $2 FROM ble_attribute WHERE uuid=$3;");
+	sqlite3_bind_int(update_chara, 1, device_id);
+	sqlite3_bind_int(update_chara, 2, GATT_PERM_READ);
+	btuuid16(0x2a4a, &srvuuid); // HID_INFORMATION
+	my_bind_uuid(update_chara, 3, &srvuuid);
+	sqlite3_step(update_chara);
+	sqlite3_reset(update_chara);
+	btuuid16(0x2a4b, &srvuuid); // HID_REPORT_MAP
+	my_bind_uuid(update_chara, 3, &srvuuid);
+	sqlite3_step(update_chara);
+	sqlite3_reset(update_chara);
+	btuuid16(0x2a4d, &srvuuid); // HID_REPORT
+	sqlite3_bind_int(update_chara, 2, GATT_PERM_NOTIFY);
+	my_bind_uuid(update_chara, 3, &srvuuid);
+	sqlite3_step(update_chara);
+	sqlite3_finalize(update_chara);
 }
+
 int attribute_init(int s, int device_id)
 {
 	unsigned char buf[40];
@@ -165,7 +214,7 @@ int attribute_init(int s, int device_id)
 	uint16_t buid,handle = 1;
 	uint16_t conhandle = 0;
 	int count;
-	
+
 	for(;;){
 		buf[0] = ATT_OP_FIND_INFO_REQ;
 		buf[1] = handle &0xff;
@@ -177,6 +226,7 @@ int attribute_init(int s, int device_id)
 			break;
 		}
 		if(buf[1] == 1){
+			/* 16-bit UUIDs */
 			for(i=2; i < len;i+= 4){
 				uint32_t ustat;
 				char *uuidstr;
