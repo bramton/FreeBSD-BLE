@@ -261,7 +261,6 @@ int set_le_event_mask(int s, uint64_t mask)
 	return 0;
 }
 
-
 int set_event_mask(int s, uint64_t mask)
 {
 	ng_hci_set_event_mask_cp semc;
@@ -413,7 +412,7 @@ end:
   return ret;
 }
 
-int le_l2connect(bdaddr_t *bd,int hci, int securecon)
+int le_l2connect(bdaddr_t *bd, int hci, int securecon, int israndom)
 {
 	struct sockaddr_l2cap l2c;
 	int s;
@@ -431,7 +430,7 @@ int le_l2connect(bdaddr_t *bd,int hci, int securecon)
 	l2c.l2cap_family = AF_BLUETOOTH;
 	l2c.l2cap_psm = 0;
 	l2c.l2cap_cid = NG_L2CAP_ATT_CID;
-	l2c.l2cap_bdaddr_type = BDADDR_LE_PUBLIC;
+	l2c.l2cap_bdaddr_type = israndom ? BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
 	bcopy(bd, &l2c.l2cap_bdaddr, sizeof(*bd));
 	printf("CONNECT\n");
 	enc = 1;
@@ -905,15 +904,18 @@ int main(int argc, char *argv[])
 	char *node="ubt0hci";
 	int len,addr_valid = 0;
 	bdaddr_t bd;
-	int sflag = 0;
+	int sflag = 0, israndom = 0;
 	int res = -1,handle = -1;
-	while((ch = getopt(argc, argv, "s") )!= -1){
+	while((ch = getopt(argc, argv, "sr") )!= -1){
 		switch(ch){
 		case 's':
 			sflag = 1;
 			break;
+		case 'r':
+			israndom = 1;
+			break;
 		default:
-			fprintf(stderr, "Usage: %s [-s] bdaddr\n", argv[0]);
+			fprintf(stderr, "Usage: %s [-s] [-r] [bdaddr]\n", argv[0]);
 			exit(-1);
 			break;
 		}
@@ -958,7 +960,7 @@ int main(int argc, char *argv[])
 	  }
 	  printf("Handle %x\n", handle);
 #endif
-	  le_l2connect(&bd, s, sflag);
+	  le_l2connect(&bd, s, sflag, israndom);
 	  //le_smpconnect(&bd, s);
 	  
 	}
