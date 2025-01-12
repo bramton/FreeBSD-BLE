@@ -391,6 +391,25 @@ int le_smpconnect(bdaddr_t *bd,int hci, int israndom)
 				
 		}
 
+#if 0
+		{
+			ng_hci_le_connection_update_cp cp = {
+				.connection_handle = handle,
+				.conn_interval_min = htobs(6),
+				.conn_interval_max = htobs(7),
+				.conn_latency = htobs(0),
+				.supervision_timeout = htobs(0xc80),
+				.minimum_ce_length = htobs(1),
+				.maximum_ce_length = htobs(1)
+			};
+			ng_hci_status_rp rp;
+
+			int n = sizeof(cp);
+			hci_request(hci, NG_HCI_OPCODE(NG_HCI_OGF_LE, NG_HCI_OCF_LE_CONNECTION_UPDATE),
+				    (char *)&cp, sizeof(cp), (char *)&rp, &n);
+		}
+#endif
+
 	fail:
 		if(ng){
 			failed.code = NG_L2CAP_SMP_PAIRFAIL;
