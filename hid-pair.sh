@@ -18,9 +18,10 @@ echo Connecting to Bluetooth address ${ADDR[1]}...
 
 hccontrol le_set_scan_enable disable
 
-lepair/lepair $BTADDR >lesecd/hcsecd.conf
+lepair/lepair $BTADDR >hcsecd.conf
 
-(cd lesecd; lesecd) &
+# reads hcsecd.conf always from the current dir
+lesecd/lesecd &
 LESECD_PID=$!
 trap "kill $LESECD_PID" EXIT HUP TERM INT
 
