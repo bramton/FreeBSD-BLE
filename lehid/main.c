@@ -106,7 +106,7 @@ void probe_service(int s, int device_id)
 	 * If there is a HID Information attribute, just assume it's a 0x1812.
 	 *
 	 * FIXME: "Read by Group Type" should also be supported.
-	 * See Linux log, frame 41.
+	 * See elecom-bitra-linux.pcapng, frame 41.
 	 */
 	update_serv = get_stmt("INSERT INTO ble_service (device_id, uuid) "
 	                       "SELECT device_id, btuuid16(0x1812) FROM ble_attribute WHERE device_id=$1 AND uuid=btuuid16(0x2A4B);");
@@ -154,7 +154,6 @@ void probe_chara(int s, int device_id)
 	uuid_t srvuuid;
 	int len;
 	int prop;
-	bool uuid_set = false;
 
 	iter_chara = get_stmt("SELECT chara_id,low_attribute_id FROM ble_chara INNER JOIN ble_attribute on low_attribute_id=ble_attribute.attribute_id  where device_id =$1;");
 	update_chara = get_stmt("UPDATE ble_chara SET uuid = $1, property = $2, value_attribute_id = (SELECT attribute_id FROM ble_attribute where handle = $3 and device_id = $4 ) WHERE chara_id = $5;");
@@ -165,6 +164,9 @@ void probe_chara(int s, int device_id)
 		attribute_id = sqlite3_column_int(iter_chara, 1);
 		printf("%d %d\n", chara_id, attribute_id);
 		len = le_att_read(s,attribute_id, buf, sizeof(buf), 0);
+		if(len <= 3){
+			continue;
+		}
 		prop = buf[0];
 		chandle = buf[1]|buf[2]<<8;
 		btuuiddec(buf+3, len-3, &srvuuid);
@@ -175,34 +177,43 @@ void probe_chara(int s, int device_id)
 		sqlite3_bind_int(update_chara, 5, chara_id);
 		sqlite3_step(update_chara);
 		sqlite3_reset(update_chara);
-		uuid_set = true;
 	}
-	sqlite3_finalize(update_chara);
-	sqlite3_finalize(iter_chara);
-
-	if(uuid_set){
-		return;
-	}
+	sqlite3_reset(update_chara);
+	sqlite3_reset(iter_chara);
 
 	/*
-	 * If there wasn't any characteristic yet, it might still be a HOGP (HID) device.
+	 * If there weren't any fitting characteristics yet, it might still be a HOGP (HID) device.
 	 */
+	iter_chara = get_stmt("SELECT chara_id FROM ble_chara WHERE device_id=$1 AND uuid=$2;");
 	update_chara = get_stmt("INSERT INTO ble_chara (service_id, value_attribute_id, uuid, property) "
-	                        "SELECT (SELECT max(service_id) FROM ble_service WHERE device_id=$1), attribute_id, uuid, $2 FROM ble_attribute WHERE uuid=$3;");
+	                        "SELECT (SELECT service_id FROM ble_service WHERE device_id=$1 AND uuid=btuuid16(0x1812)), attribute_id, uuid, $2 FROM ble_attribute WHERE uuid=$3;");
+	sqlite3_bind_int(iter_chara, 1, device_id);
 	sqlite3_bind_int(update_chara, 1, device_id);
 	sqlite3_bind_int(update_chara, 2, GATT_PERM_READ);
 	btuuid16(0x2a4a, &srvuuid); // HID_INFORMATION
+	my_bind_uuid(iter_chara, 2, &srvuuid);
 	my_bind_uuid(update_chara, 3, &srvuuid);
-	sqlite3_step(update_chara);
-	sqlite3_reset(update_chara);
+	if(sqlite3_step(iter_chara)!=SQLITE_ROW){
+		sqlite3_step(update_chara);
+		sqlite3_reset(update_chara);
+	}
+	sqlite3_reset(iter_chara);
 	btuuid16(0x2a4b, &srvuuid); // HID_REPORT_MAP
+	my_bind_uuid(iter_chara, 2, &srvuuid);
 	my_bind_uuid(update_chara, 3, &srvuuid);
-	sqlite3_step(update_chara);
-	sqlite3_reset(update_chara);
+	if(sqlite3_step(iter_chara)!=SQLITE_ROW){
+		sqlite3_step(update_chara);
+		sqlite3_reset(update_chara);
+	}
+	sqlite3_reset(iter_chara);
 	btuuid16(0x2a4d, &srvuuid); // HID_REPORT
 	sqlite3_bind_int(update_chara, 2, GATT_PERM_NOTIFY);
+	my_bind_uuid(iter_chara, 2, &srvuuid);
 	my_bind_uuid(update_chara, 3, &srvuuid);
-	sqlite3_step(update_chara);
+	if(sqlite3_step(iter_chara)!=SQLITE_ROW){
+		sqlite3_step(update_chara);
+	}
+	sqlite3_finalize(iter_chara);
 	sqlite3_finalize(update_chara);
 }
 
