@@ -43,8 +43,7 @@ int le_smpconnect(bdaddr_t *bdaddr, int hci, bool israndom)
 	uint8_t k[16];
 	struct sockaddr_l2cap myname;
 
-	s = socket(PF_BLUETOOTH, SOCK_SEQPACKET|SOCK_NONBLOCK,
-		   BLUETOOTH_PROTO_L2CAP);
+	s = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BLUETOOTH_PROTO_L2CAP);
 	if (s < 0)
 		return (-1);
 
@@ -53,11 +52,12 @@ int le_smpconnect(bdaddr_t *bdaddr, int hci, bool israndom)
 	l2addr.l2cap_psm = 0;
 	l2addr.l2cap_cid = NG_L2CAP_SMP_CID;
 	l2addr.l2cap_bdaddr_type = israndom ? BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
-	memcpy(bdaddr, &l2addr.l2cap_bdaddr, sizeof(*bdaddr));
+	bdaddr_copy(bdaddr, &l2addr.l2cap_bdaddr);
 
-	// TODO: no bind needed???
-	if (connect(s, (struct sockaddr *) &l2addr, sizeof(l2addr)) < 0){
-	  perror("connect");
+	if (connect(s, (struct sockaddr *) &l2addr, sizeof(l2addr)) < 0 && 
+		errno != EINPROGRESS) {
+	  perror("Failed to connect to l2cap socket:");
+	close(s);
 	  return (-1);
 	}
 
