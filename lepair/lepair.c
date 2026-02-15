@@ -31,36 +31,32 @@
 
 int timeout = 30;
 
-static int le_connect_result(int s);
 struct smp_ctx {
 	struct sockaddr_l2cap l2ar, l2al;
 	struct ng_l2cap_smp_pairinfo preq;
 	struct ng_l2cap_smp_pairinfo pres;
-	uint8_t tk[16];
+	uint8_t tk[16]; /* Temporary Key */
 	uint8_t rval[16];
+	uint8_t cnfrm_val[16];
 };
 struct smp_ctx ctx;
 
-int l2s;
+int l2s, hs; /* l2cap socket and hci socket */
 int l2connect(bdaddr_t *bdrema, bdaddr_t *bdloca, int hci, uint8_t rem_addrtype)
 {
-	struct sockaddr_l2cap l2rema, l2loca;
 	l2s = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BLUETOOTH_PROTO_L2CAP);
 	if (l2s < 0)
 		return (-1);
 
-	memset(&ctx.l2al, 0, sizeof(ctx.l2al));
 	ctx.l2al.l2cap_len = sizeof(ctx.l2al);
 	ctx.l2al.l2cap_family = AF_BLUETOOTH;
 	ctx.l2al.l2cap_bdaddr_type = BDADDR_LE_PUBLIC; // TODO: always ??
 	bdaddr_copy(&ctx.l2al.l2cap_bdaddr, bdloca);
 	if (bind(l2s, (struct sockaddr *) &ctx.l2al, sizeof(struct sockaddr_l2cap)) < 0) {
 		perror("Could not bind to local address");
-		close(l2s);
 		return (-1);
 	}
 
-	memset(&ctx.l2ar, 0, sizeof(ctx.l2ar));
 	ctx.l2ar.l2cap_len = sizeof(ctx.l2ar);
 	ctx.l2ar.l2cap_family = AF_BLUETOOTH;
 	ctx.l2ar.l2cap_cid = NG_L2CAP_SMP_CID;
@@ -72,11 +68,38 @@ int l2connect(bdaddr_t *bdrema, bdaddr_t *bdloca, int hci, uint8_t rem_addrtype)
 	if (connect(l2s, (struct sockaddr *) &ctx.l2ar, sizeof(struct sockaddr_l2cap)) < 0 && 
 	    errno != EINPROGRESS) {
 	    perror("Failed to connect to l2cap socket");
-	    close(l2s);
 	    return (-1);
 	}
 	perror("After connect");
 	return (0);
+}
+
+/* Copied from hccontrol/node.c Should actually be from getsockopt?  */
+int find_hci_con_handle(void) {
+	struct ng_btsocket_hci_raw_con_list r;
+ 	int ret = ERROR;
+	memset(&r, 0, sizeof(r));
+	r.num_connections = NG_HCI_MAX_CON_NUM;
+	r.connections = calloc(NG_HCI_MAX_CON_NUM, sizeof(ng_hci_node_con_ep));
+	if (r.connections == NULL) {
+		errno = ENOMEM;
+		return (ERROR);
+	}
+
+	if (ioctl(hs, SIOC_HCI_RAW_NODE_GET_CON_LIST, &r, sizeof(r)) < 0) {
+		goto out;
+	}
+
+	for (int n = 0; n < r.num_connections; n++) {	
+		if (bdaddr_same(&r.connections[n].bdaddr, &ctx.l2ar.l2cap_bdaddr)) {
+			ret = r.connections[n].con_handle;
+			goto out;
+		}
+	}
+
+out:
+	free(r.connections);
+	return (ret);
 }
 
 int send_pairing_request(void) {
@@ -93,24 +116,22 @@ int send_pairing_request(void) {
 	n = write(l2s, &preq, sizeof(preq));
 	if (n < 0) {
 		perror("Could not send pairing request");
-		close(l2s);
 		return (-1);
 	}
 	else if (n != sizeof(preq)) {
 		printf("Could not send complete pairing request\n");
-		close(l2s);
 		return (-1);
 	}
-	memcpy(&preq, &ctx.preq, sizeof(preq));
+	memcpy(&ctx.preq, &preq, sizeof(preq));
 	return (0);
 }
 
 int process_pairing_response(struct ng_l2cap_smp_pairinfo *pres) {
 	unsigned int pin = 0;
-	printf("CODE:%d IOCAP %d %d %d %d %d %d(%d)\n", pres->code,pres->iocap ,
-		 pres->oob, pres->authreq,
-		 pres->maxkeysize, pres->ikeydist, pres->rkeydist, sizeof(*pres));
-	memcpy(pres, &ctx.pres, sizeof(*pres));
+	//printf("CODE:%d IOCAP %d %d %d %d %d %d(%d)\n", pres->code,pres->iocap ,
+	//	 pres->oob, pres->authreq,
+	//	 pres->maxkeysize, pres->ikeydist, pres->rkeydist, sizeof(*pres));
+	memcpy(&ctx.pres, pres, sizeof(*pres));
 
 	if((ctx.preq.iocap < 5) && (ctx.pres.iocap < 5)){
 	  if(iocapmat[ctx.pres.iocap][ctx.preq.iocap]==SMP_USE_PASSKEY_I){
@@ -125,7 +146,7 @@ int process_pairing_response(struct ng_l2cap_smp_pairinfo *pres) {
 	  fprintf(stderr, "PIN:%u %x\n", pin, pin);
 	} else {
 	  	fprintf(stderr, "IO cap out of range\n");
-		return (1);
+		return (-1);
 	}
 	ctx.tk[15] = pin & 0xff;
 	ctx.tk[14] = (pin >> 8) & 0xff;
@@ -141,8 +162,8 @@ int send_pairing_confirm(void) {
 
 	msg_cnfrm.code = SMP_CODE_PAIRCONFIRM;
 	smp_c1b(ctx.tk, ctx.rval, &ctx.preq, &ctx.pres,
-	       ctx.l2ar.l2cap_bdaddr_type, &ctx.l2ar.l2cap_bdaddr, 
-	       ctx.l2al.l2cap_bdaddr_type, &ctx.l2al.l2cap_bdaddr, &ret);
+	       ctx.l2al.l2cap_bdaddr_type, &ctx.l2al.l2cap_bdaddr, 
+	       ctx.l2ar.l2cap_bdaddr_type, &ctx.l2ar.l2cap_bdaddr, ret);
 	swap128(ret, msg_cnfrm.val);
 	if (write(l2s, &msg_cnfrm, sizeof(msg_cnfrm)) < 0) {
 		perror("Failed sending confirm msg");
@@ -151,23 +172,53 @@ int send_pairing_confirm(void) {
 	return (0);
 }
 
-int process_pairing_confirm(struct ng_l2cap_smp_pairinfo *pi) {
-	printf("Pairing confirm received\n");
+void hexdump(uint8_t *val) {
+	for (int i = 0; i < 16; i++) {
+		printf("%02x ", val[i]);
+	}
+	printf("\n");
+}
+int process_pairing_confirm(struct ng_l2cap_smp_keyinfo *pkt) {
+	printf("<Pairing confirm received\n");
+	memcpy(&ctx.cnfrm_val, pkt->val, sizeof(pkt->val));
 	return (0);
 }
+
 int process_pairing_failed(struct ng_l2cap_smp_failed *pf) {
-	printf("Pairing failed: %d\n", pf->reason);
+	printf("<Pairing failed: %d\n", pf->reason);
 	return (0);
 }
 
 int send_rand_val(void) {
+	printf(">Sending random value\n");
 	struct ng_l2cap_smp_keyinfo msg_rand;
 	msg_rand.code = SMP_CODE_PAIRRAND;		
-	swap128(&ctx.rval, &msg_rand.val);
+	swap128(ctx.rval, msg_rand.val);
 	if (write(l2s, &msg_rand, sizeof(msg_rand))  < 0) {
 		perror("Failed sending random value");
 		return (-1);
 	}
+	return (0);
+}
+int process_pairing_randv(struct ng_l2cap_smp_keyinfo *rvr) {
+	printf("<Received random value\n");
+	uint8_t rval[16];
+	uint8_t ret[16];
+	swap128(rvr->val, rval);
+	smp_c1b(ctx.tk, rval, &ctx.preq, &ctx.pres,
+	       ctx.l2al.l2cap_bdaddr_type, &ctx.l2al.l2cap_bdaddr, 
+	       ctx.l2ar.l2cap_bdaddr_type, &ctx.l2ar.l2cap_bdaddr, ret);
+
+	/* Validate confirm value */
+	for(int i = 0; i < 16; i++){
+		if(ret[i] != ctx.cnfrm_val[15-i]){
+			printf("uh oh mis match!!\n");
+			return (-1);
+		}
+	}
+	int h = find_hci_con_handle();
+	printf("Handle found!! %d\n", h);
+
 	return (0);
 }
 
@@ -178,24 +229,6 @@ int le_smpconnect(bdaddr_t *bdaddr, bdaddr_t *bdloc, int hci, uint8_t addrtype)
 	       
 
 
-		res = read(s, &msg_rand_r, sizeof(msg_rand_r));
-		if(msg_rand_r.code != SMP_CODE_PAIRRAND){
-			struct ng_l2cap_smp_failed *req;
-			req = (void *)&msg_rand_r;
-			printf("FAILED:srand.code %d %d\n", req->code, req->reason);
-			ng = 1;
-			goto fail;
-		}
-		swap128(msg_rand_r.val, rval);
-		smp_c1(k, rval, &preq, &pres,
-		       myname.l2cap_bdaddr_type, myname.l2cap_bdaddr,  addrtype , bdaddr);
-		for(i =0; i< 16; i++){
-			if(rval[i] != sconfirm.val[15-i]){
-				ng = 1;
-				goto fail;
-			}
-		}
-		
 
 		{
 			uint8_t mr[16], sr[16],stk[16];
@@ -310,79 +343,17 @@ int le_smpconnect(bdaddr_t *bdaddr, bdaddr_t *bdloc, int hci, uint8_t addrtype)
 	*/
 }
 
-static int le_connect_result(int s)
-{
-	uint8_t buf[512];
-	ng_hci_event_pkt_t *ep = (ng_hci_event_pkt_t *)buf;
-	ng_hci_le_ep *lep = (ng_hci_le_ep *)(ep + 1);
-	ng_hci_le_connection_complete_ep *ccep = (ng_hci_le_connection_complete_ep *)(lep + 1);
-	struct bt_devfilter flt, flt_old;
+int main(int argc, char *argv[]) {
+	memset(&ctx, 0, sizeof(ctx));
 
-	ssize_t n;
-	int error = 0;
-	int to = 30;
-
-	memset(&flt, 0, sizeof(flt));
-	bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
-	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_LE);
-
-	if (bt_devfilter(s, &flt, &flt_old) < 0) {
-		perror("Failed setting filter on socket");
-		return(-1);
-        }
-
-	n = bt_devrecv(s, buf, sizeof(buf), to);
-	printf("Recieved %d bytes\n, n");
-	printf("Size of ep %d bytes\n", sizeof(ep));
-	if (n < 0) {
-		error = errno;
-		goto out;
-	}
-
-	if(ep->type != NG_HCI_EVENT_PKT){
-		error = EIO;
-		goto out;
-	}
-
-	if(lep->subevent_code != NG_HCI_LEEV_CON_COMPL){
-		error = EIO;
-		goto out;
-	}
-//#if 1
-	char addrstring[50];
-	printf("Connection Event:Status%d, handle%d, role%d, address_type:%d\n",
-	       ccep->status, ccep->handle, ccep->role, ccep->address_type);
-	bt_ntoa(&ccep->address, addrstring);
-	printf("%s %d %d %d %d\n", addrstring, ccep->interval, ccep->latency,
-	       ccep->supervision_timeout, ccep->master_clock_accuracy);
-//#endif
-	if(ccep->status != 0){
-		printf("REQUEST ERROR %d\n", ccep->status);
-		return 0;
-	}
-
-out:
-	bt_devfilter(s, &flt_old, NULL);
-	if (error != 0) {
-		errno = error;
-		return (-1);
-	}
-
-	return ccep->handle;
-}
-
-int main(int argc, char *argv[])
-{
-
-	smp_c1_unittest();
-	smp_c1_unittest_b();
-	int s;
-	char *node="ubt1hci";
-	int addr_valid = 0;
+	//smp_c1_unittest();
+	//smp_c1_unittest_b();
+	char *node = "ubt1hci";
 	bdaddr_t bd, bdloc;
 	int ch;
 	uint8_t addrtype = BDADDR_LE_PUBLIC;
 	uint8_t buf[512]; // TODO: max size?
+	 ssize_t len;
 	
 	while((ch = getopt(argc, argv, "r")) != -1){
 		switch(ch){
@@ -399,53 +370,58 @@ int main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 	
-	if(argc > 0){
-		addr_valid = bt_aton(argv[0],&bd);
+	if(argc <= 0){
+		fprintf(stderr, "Not enough arguments\n");
 	}
 
 	if (bt_devaddr(node, &bdloc) < 1) {
-		perror("Failed to get address of node");
+		perror("Failed to get address of local node");
+		return (-1);
+	}
+	if (!bt_aton(argv[0], &bd)) {
+		fprintf(stderr, "Invalid remote address\n");
 		return (-1);
 	}
 	
 	printf("Opening %s with address %s\n", node, bt_ntoa(&bdloc, NULL));
-	s = bt_devopen(node);
-
-	if(addr_valid){
-		le_smpconnect(&bd, &bdloc, s, addrtype);
-	}else{
-		fprintf(stderr, "Address Invalid\n");
+	if ((hs = bt_devopen(node)) < 1) {
+		fprintf(stderr, "Failed opening local node\n");
+		return (-1);
 	}
 
-	l2connect(&bd, &bdloc, 0, addrtype);
+	if (l2connect(&bd, &bdloc, 0, addrtype) < 0) {
+		fprintf(stderr, "Failed connecting to remote.\n");
+		return (-1);
+		goto out;
+	}
 	send_pairing_request();
-	 ssize_t len;
-	 for (;;) {
-	 	len = read(l2s, &buf, sizeof(buf));
-		if (len < 0) {
-			perror("Error reading from l2cap socket");
-			close (l2s);
-		}
-		if (buf[0] == SMP_CODE_PAIRRES) {
-			if (process_pairing_response((struct ng_l2cap_smp_pairinfo*)buf) == 0) {
-				memset(buf, 0, sizeof(buf));
-				send_pairing_confirm();
-			}
-		} else if (buf[0] == SMP_CODE_PAIRCONFIRM) {
-			process_pairing_confirm((struct ng_l2cap_smp_pairinfo*)buf);
-			send_rand_val();
-			memset(buf, 0, sizeof(buf));
-		} else if (buf[0] == SMP_CODE_PAIRFAIL) {
-			process_pairing_failed((struct ng_l2cap_smp_failed*)buf);
-			memset(buf, 0, sizeof(buf));
-		} else if (buf[0] == SMP_CODE_PAIRRAND) {
-			//process_pairing_randv((struct ng_l2cap_smp_pairinfo*)buf);
-			printf("rand val received\n");
-			memset(buf, 0, sizeof(buf));
-		} else {
-			printf("Unknown code: %d\n", buf[0]);
-			memset(buf, 0, sizeof(buf));
-			return (-1);
-		}
-	 }
+	for (;;) {
+		len = read(l2s, &buf, sizeof(buf));
+	       if (len < 0) {
+	       	perror("Error reading from l2cap socket");
+	       	goto out;
+	       }
+	       if (buf[0] == SMP_CODE_PAIRRES) {
+	       	if (process_pairing_response((struct ng_l2cap_smp_pairinfo*)buf) == 0) {
+	       		send_pairing_confirm();
+	       	}
+	       } else if (buf[0] == SMP_CODE_PAIRCONFIRM) {
+	       	process_pairing_confirm((struct ng_l2cap_smp_keyinfo*)buf);
+	       	send_rand_val();
+	       } else if (buf[0] == SMP_CODE_PAIRFAIL) {
+	       	process_pairing_failed((struct ng_l2cap_smp_failed*)buf);
+	       } else if (buf[0] == SMP_CODE_PAIRRAND) {
+	       	process_pairing_randv((struct ng_l2cap_smp_keyinfo*)buf);
+	       } else {
+	       	printf("Unknown code: %d\n", buf[0]);
+	       	return (-1);
+	       	goto out;
+	       }
+	       memset(buf, 0, sizeof(buf));
+	}
+
+out:
+	 close(l2s);
+	 close(hs);
+	 memset(&ctx, 0, sizeof(ctx));
 }
