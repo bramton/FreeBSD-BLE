@@ -32,11 +32,14 @@
 int timeout = 30;
 
 struct smp_ctx {
+	int hci_handle;
 	struct sockaddr_l2cap l2ar, l2al;
 	struct ng_l2cap_smp_pairinfo preq;
 	struct ng_l2cap_smp_pairinfo pres;
 	uint8_t tk[16]; /* Temporary Key */
+	uint8_t stk[16]; 
 	uint8_t rval[16];
+	uint8_t rvalr[16]; /* Random value from responder */
 	uint8_t cnfrm_val[16];
 };
 struct smp_ctx ctx;
@@ -77,13 +80,13 @@ int l2connect(bdaddr_t *bdrema, bdaddr_t *bdloca, int hci, uint8_t rem_addrtype)
 /* Copied from hccontrol/node.c Should actually be from getsockopt?  */
 int find_hci_con_handle(void) {
 	struct ng_btsocket_hci_raw_con_list r;
- 	int ret = ERROR;
+ 	int ret = -1;
 	memset(&r, 0, sizeof(r));
 	r.num_connections = NG_HCI_MAX_CON_NUM;
 	r.connections = calloc(NG_HCI_MAX_CON_NUM, sizeof(ng_hci_node_con_ep));
 	if (r.connections == NULL) {
 		errno = ENOMEM;
-		return (ERROR);
+		return (-1);
 	}
 
 	if (ioctl(hs, SIOC_HCI_RAW_NODE_GET_CON_LIST, &r, sizeof(r)) < 0) {
@@ -92,7 +95,8 @@ int find_hci_con_handle(void) {
 
 	for (int n = 0; n < r.num_connections; n++) {	
 		if (bdaddr_same(&r.connections[n].bdaddr, &ctx.l2ar.l2cap_bdaddr)) {
-			ret = r.connections[n].con_handle;
+			ctx.hci_handle = r.connections[n].con_handle;
+			ret = 0;
 			goto out;
 		}
 	}
@@ -200,12 +204,11 @@ int send_rand_val(void) {
 	}
 	return (0);
 }
-int process_pairing_randv(struct ng_l2cap_smp_keyinfo *rvr) {
+int process_pairing_randv(struct ng_l2cap_smp_keyinfo *pkt) {
 	printf("<Received random value\n");
-	uint8_t rval[16];
 	uint8_t ret[16];
-	swap128(rvr->val, rval);
-	smp_c1b(ctx.tk, rval, &ctx.preq, &ctx.pres,
+	swap128(pkt->val, ctx.rvalr);
+	smp_c1b(ctx.tk, ctx.rvalr, &ctx.preq, &ctx.pres,
 	       ctx.l2al.l2cap_bdaddr_type, &ctx.l2al.l2cap_bdaddr, 
 	       ctx.l2ar.l2cap_bdaddr_type, &ctx.l2ar.l2cap_bdaddr, ret);
 
@@ -216,9 +219,32 @@ int process_pairing_randv(struct ng_l2cap_smp_keyinfo *rvr) {
 			return (-1);
 		}
 	}
-	int h = find_hci_con_handle();
-	printf("Handle found!! %d\n", h);
 
+	return (0);
+}
+
+int generate_stk(void) {
+	uint8_t ret[16];
+	smp_s1(ctx.tk, ctx.rval, ctx.rvalr, ret);
+	swap128(ret, ctx.stk);
+	return (0); // TODO
+}
+
+int start_encryption(void) {
+	printf("Starting encryption\n");
+	struct bt_devreq req;
+	ng_hci_le_start_encryption_cp cp;
+	//ng_hci_status_rp rp;
+
+	memcpy(&cp.long_term_key, ctx.stk, 16);
+	cp.connection_handle = ctx.hci_handle;
+	cp.random_number = 0;
+	cp.encrypted_diversifier = 0;
+
+	req.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE ,NG_HCI_OCF_LE_START_ENCRYPTION);
+	req.cparam = &cp;
+	req.clen = sizeof(cp);
+	bt_devreq(hs, &req, 30);
 	return (0);
 }
 
@@ -232,21 +258,6 @@ int le_smpconnect(bdaddr_t *bdaddr, bdaddr_t *bdloc, int hci, uint8_t addrtype)
 
 		{
 			uint8_t mr[16], sr[16],stk[16];
-			ng_hci_le_start_encryption_cp cp;
-			ng_hci_status_rp rp;
-			ssize_t n;
-
-			swap128(mrand.val, mr);
-			swap128(srand.val, sr);
-			smp_s1(k, sr, mr, stk);
-			swap128(stk, cp.long_term_key);
-			cp.connection_handle = handle;
-			cp.random_number = 0;
-			cp.encrypted_diversifier = 0;
-			n = sizeof(cp);
-			hci_request(hci, NG_HCI_OPCODE(NG_HCI_OGF_LE
-				     ,NG_HCI_OCF_LE_START_ENCRYPTION),
-				    (char *)&cp, sizeof(cp), (char *)&rp, &n);
 			{
 				struct ng_l2cap_smp_keyinfo ki;
 				struct ng_l2cap_smp_centralinfo ci;
@@ -394,6 +405,12 @@ int main(int argc, char *argv[]) {
 		return (-1);
 		goto out;
 	}
+	if (find_hci_con_handle() < 0) {
+		fprintf(stderr, "Failed to find hci handle of l2cap connection.\n");
+		return (-1);
+		goto out;
+	}
+
 	send_pairing_request();
 	for (;;) {
 		len = read(l2s, &buf, sizeof(buf));
@@ -412,6 +429,8 @@ int main(int argc, char *argv[]) {
 	       	process_pairing_failed((struct ng_l2cap_smp_failed*)buf);
 	       } else if (buf[0] == SMP_CODE_PAIRRAND) {
 	       	process_pairing_randv((struct ng_l2cap_smp_keyinfo*)buf);
+		generate_stk();
+		start_encryption();
 	       } else {
 	       	printf("Unknown code: %d\n", buf[0]);
 	       	return (-1);
