@@ -17,9 +17,9 @@
 #define SMP_CODE_PAIRCONFIRM 0x03
 #define SMP_CODE_PAIRRAND 0x04
 #define SMP_CODE_PAIRFAIL 0x05
-#define SMP_CODE_ENCINFO 0x06
-#define SMP_CODE_CENTRALINFO 0x07
-#define SMP_CODE_IDINFO 0x08
+#define SMP_CODE_LTK 0x06 /* Encryption Information */
+#define SMP_CODE_CID 0x07 /* Central Identification */
+#define SMP_CODE_IRK 0x08 /* Identity Information */
 #define SMP_CODE_IDADDR 0x09
 #define SMP_CODE_SIGNINFO 0x0a
 #define SMP_CODE_SECREQ 0x0b
@@ -74,10 +74,10 @@ struct __attribute__((packed)) ng_l2cap_smp_failed {
 };
 
 /* Central identification */
-struct __attribute__((packed)) ng_l2cap_smp_centralinfo {
+struct __attribute__((packed)) ng_l2cap_smp_cid {
 	uint8_t code;
 	uint16_t ediv; /* Encrypted Diversifier */
-	uint8_t rand[8];
+	uint64_t rand;
 };
 
 /* Identity address information */
@@ -96,7 +96,7 @@ static uint8_t iocapmat[5][5] ={
 };
 
 int smp_e(const uint8_t*, const uint8_t*, uint8_t*);
-int smp_s1(const uint8_t*, uint8_t*, uint8_t*, uint8_t*);
+int smp_s1(const uint8_t*, const uint8_t*, const uint8_t*, uint8_t*);
 /* Confirm value generation function for LE legacy pairing */
 int smp_c1(uint8_t*, uint8_t*, uint8_t*, uint8_t*, uint8_t, bdaddr_t*,uint8_t, bdaddr_t*);
 int smp_c1b(const uint8_t *, const uint8_t *,

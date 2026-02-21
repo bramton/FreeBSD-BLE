@@ -32,15 +32,17 @@
 int timeout = 30;
 
 struct smp_ctx {
-	int hci_handle;
+	uint16_t hci_handle;
 	struct sockaddr_l2cap l2ar, l2al;
 	struct ng_l2cap_smp_pairinfo preq;
 	struct ng_l2cap_smp_pairinfo pres;
 	uint8_t tk[16]; /* Temporary Key */
 	uint8_t stk[16]; 
-	uint8_t rval[16];
+	uint8_t rvali[16]; /* Random value from initiator */
 	uint8_t rvalr[16]; /* Random value from responder */
 	uint8_t cnfrm_val[16];
+	uint16_t ediv;
+	uint64_t cid_rand;
 };
 struct smp_ctx ctx;
 
@@ -162,10 +164,10 @@ int send_pairing_confirm(void) {
 	struct ng_l2cap_smp_keyinfo msg_cnfrm;
 	uint8_t ret[16];
 
-	arc4random_buf(ctx.rval, sizeof(ctx.rval));
+	arc4random_buf(ctx.rvali, sizeof(ctx.rvali));
 
 	msg_cnfrm.code = SMP_CODE_PAIRCONFIRM;
-	smp_c1b(ctx.tk, ctx.rval, &ctx.preq, &ctx.pres,
+	smp_c1b(ctx.tk, ctx.rvali, &ctx.preq, &ctx.pres,
 	       ctx.l2al.l2cap_bdaddr_type, &ctx.l2al.l2cap_bdaddr, 
 	       ctx.l2ar.l2cap_bdaddr_type, &ctx.l2ar.l2cap_bdaddr, ret);
 	swap128(ret, msg_cnfrm.val);
@@ -197,7 +199,7 @@ int send_rand_val(void) {
 	printf(">Sending random value\n");
 	struct ng_l2cap_smp_keyinfo msg_rand;
 	msg_rand.code = SMP_CODE_PAIRRAND;		
-	swap128(ctx.rval, msg_rand.val);
+	swap128(ctx.rvali, msg_rand.val);
 	if (write(l2s, &msg_rand, sizeof(msg_rand))  < 0) {
 		perror("Failed sending random value");
 		return (-1);
@@ -223,38 +225,37 @@ int process_pairing_randv(struct ng_l2cap_smp_keyinfo *pkt) {
 	return (0);
 }
 
-int generate_stk(void) {
-	uint8_t ret[16];
-	smp_s1(ctx.tk, ctx.rval, ctx.rvalr, ret);
-	swap128(ret, ctx.stk);
-	return (0); // TODO
-}
-
-int start_encryption(void) {
+int start_encryption(uint16_t ediv, uint64_t rand) {
 	printf("Starting encryption\n");
-	struct bt_devreq req;
 	ng_hci_le_start_encryption_cp cp;
-	//ng_hci_status_rp rp;
+	struct bt_devreq req;
 
-	memcpy(&cp.long_term_key, ctx.stk, 16);
+	memset(&cp, 0, sizeof(cp));
+	swap128(ctx.stk, cp.long_term_key);
 	cp.connection_handle = ctx.hci_handle;
-	cp.random_number = 0;
-	cp.encrypted_diversifier = 0;
+	cp.encrypted_diversifier = ediv;
+	cp.random_number = rand;
 
-	req.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE ,NG_HCI_OCF_LE_START_ENCRYPTION);
+	memset(&req, 0, sizeof(req));
+	req.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE, NG_HCI_OCF_LE_START_ENCRYPTION);
 	req.cparam = &cp;
 	req.clen = sizeof(cp);
-	bt_devreq(hs, &req, 30);
+	if (bt_devreq(hs, &req, 10) < 0) {
+		perror("Could not start encryption");
+		return (-1);
+	}
+
 	return (0);
+}
+
+int process_pairing_cid(struct ng_l2cap_smp_cid *pkt) {
+	printf("ediv: %02x\n",pkt->ediv);
+	printf("rand: %08x\n",pkt->rand);
 }
 
 int le_smpconnect(bdaddr_t *bdaddr, bdaddr_t *bdloc, int hci, uint8_t addrtype)
 {
 	/*
-		struct ng_l2cap_smp_failed failed;
-	       
-
-
 
 		{
 			uint8_t mr[16], sr[16],stk[16];
@@ -429,8 +430,12 @@ int main(int argc, char *argv[]) {
 	       	process_pairing_failed((struct ng_l2cap_smp_failed*)buf);
 	       } else if (buf[0] == SMP_CODE_PAIRRAND) {
 	       	process_pairing_randv((struct ng_l2cap_smp_keyinfo*)buf);
-		generate_stk();
-		start_encryption();
+		smp_s1(ctx.tk, ctx.rvalr, ctx.rvali, ctx.stk);
+		start_encryption(0, 0);
+	       } else if (buf[0] == SMP_CODE_CID) {
+	       		process_pairing_cid((struct ng_l2cap_smp_cid*)buf);
+	       } else if (buf[0] == SMP_CODE_LTK) {
+		       printf("Received LTK msg\n");
 	       } else {
 	       	printf("Unknown code: %d\n", buf[0]);
 	       	return (-1);

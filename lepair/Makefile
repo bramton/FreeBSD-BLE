@@ -1,10 +1,10 @@
 PROG=lepair
-PREFIX?= /usr/local
-BINDIR= ${PREFIX}/sbin
+PREFIX?= /usr/local 
+#BINDIR= ${PREFIX}/sbin
 MANDIR= ${PREFIX}/man/man
 LIBDIR= ${PREFIX}/lib
 SRCS=lepair.c send_recv.c l2cap_smp.c
-CFLAGS+= -I${PREFIX}/include -Wall
+CFLAGS+= -I${PREFIX}/include -Wall -ansi -pedantic
 LDFLAGS+= -L${PREFIX}/lib
 LDADD=-lbluetooth -lcrypto
 MK_MAN=no
