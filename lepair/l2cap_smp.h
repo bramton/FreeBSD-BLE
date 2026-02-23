@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <bluetooth.h>
 #include <openssl/aes.h>
+#include <openssl/evp.h>
 
 /* Security Manager Protocol codes */
 #define SMP_CODE_PAIRREQ 0x01
@@ -20,9 +21,9 @@
 #define SMP_CODE_LTK 0x06 /* Encryption Information */
 #define SMP_CODE_CID 0x07 /* Central Identification */
 #define SMP_CODE_IRK 0x08 /* Identity Information */
-#define SMP_CODE_IDADDR 0x09
-#define SMP_CODE_SIGNINFO 0x0a
-#define SMP_CODE_SECREQ 0x0b
+#define SMP_CODE_IDADDR 0x09 /* Identity Address */
+#define SMP_CODE_CSRK 0x0a /* Signing Information */
+#define SMP_CODE_SECREQ 0x0b /* Security Request */
 
 #define SMP_OOB_DATA  0x01
 
@@ -96,13 +97,16 @@ static uint8_t iocapmat[5][5] ={
 };
 
 int smp_e(const uint8_t*, const uint8_t*, uint8_t*);
+int smp_eb(const uint8_t*, const uint8_t*, uint8_t*);
 int smp_s1(const uint8_t*, const uint8_t*, const uint8_t*, uint8_t*);
+
 /* Confirm value generation function for LE legacy pairing */
 int smp_c1(uint8_t*, uint8_t*, uint8_t*, uint8_t*, uint8_t, bdaddr_t*,uint8_t, bdaddr_t*);
 int smp_c1b(const uint8_t *, const uint8_t *,
 		const struct ng_l2cap_smp_pairinfo*, const struct ng_l2cap_smp_pairinfo*,
 		const uint8_t, const bdaddr_t*,
 		const uint8_t, const bdaddr_t*, uint8_t*);
+
 void inline swap128(const uint8_t *src, uint8_t *dst)
 {
 	for (int i=0; i < 16; i++) {

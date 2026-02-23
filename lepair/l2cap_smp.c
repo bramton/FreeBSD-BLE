@@ -8,16 +8,34 @@
 #include <stdio.h>
 #include <string.h>
 
-int smp_e(const uint8_t *k,const uint8_t *data, uint8_t *out)
-{
+int
+smp_e(const uint8_t *k,const uint8_t *data, uint8_t *out) {
 	AES_KEY key;
 	AES_set_encrypt_key(k, 128, &key);
 	AES_ecb_encrypt(data, out, &key, AES_ENCRYPT);
 	return 0;
 }
+int
+smp_eb(const uint8_t *k,const uint8_t *data, uint8_t *out) {
+	EVP_CIPHER_CTX *cctx;
+	cctx = EVP_CIPHER_CTX_new();
+	int outlen;
+	if (!EVP_EncryptInit_ex(cctx, EVP_aes_128_ecb(), NULL, k, NULL)) {
+		fprintf(stderr, "Failed encryption init\n");
+		EVP_CIPHER_CTX_free(cctx);
+		return (-1);
+	}
+	if (!EVP_EncryptUpdate(cctx, out, &outlen, data, 16)) {
+		fprintf(stderr, "Failed encryption\n");
+		EVP_CIPHER_CTX_free(cctx);
+		return (-1);
+	}
+	EVP_CIPHER_CTX_free(cctx);
+	return 0;
+}
 
-int smp_s1(const uint8_t *k, uint8_t *r1, uint8_t *r2, uint8_t *out)
-{
+int
+smp_s1(const uint8_t *k, const uint8_t *r1, const uint8_t *r2, uint8_t *out) {
 	uint8_t r[16];
 	bcopy(r1+8, r, 8);
 	bcopy(r2+8, r+8, 8);
@@ -55,6 +73,15 @@ int smp_c1b(const uint8_t *k, const uint8_t *r,
 		tmp[i] = ret[i] ^ p2[i]; 
 	}
 	smp_e(k, tmp, ret); 
+	for (int i = 0; i < 16; i++) {
+		printf("%02x ", ret[i]);
+	}
+	printf("\n");
+	smp_eb(k, tmp, ret); 
+	for (int i = 0; i < 16; i++) {
+		printf("%02x ", ret[i]);
+	}
+	printf("\n");
 
 	return (0);
 }

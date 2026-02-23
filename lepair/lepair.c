@@ -33,49 +33,47 @@ int timeout = 30;
 
 struct smp_ctx {
 	uint16_t hci_handle;
-	struct sockaddr_l2cap l2ar, l2al;
+	struct sockaddr_l2cap l2ac, l2ap;
 	struct ng_l2cap_smp_pairinfo preq;
 	struct ng_l2cap_smp_pairinfo pres;
 	uint8_t tk[16]; /* Temporary Key */
-	uint8_t stk[16]; 
+	uint8_t stk[16]; /* Short Term Key */
 	uint8_t rvali[16]; /* Random value from initiator */
 	uint8_t rvalr[16]; /* Random value from responder */
 	uint8_t cnfrm_val[16];
-	uint16_t ediv;
-	uint64_t cid_rand;
+	uint16_t ediv; // TODO: is in network order?
+	uint64_t cid_rand; // TODO: is in network order?
 };
 struct smp_ctx ctx;
 
 int l2s, hs; /* l2cap socket and hci socket */
-int l2connect(bdaddr_t *bdrema, bdaddr_t *bdloca, int hci, uint8_t rem_addrtype)
-{
+
+int
+l2connect(bdaddr_t *bdper, bdaddr_t *bdcen, uint8_t rem_addrtype) {
 	l2s = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BLUETOOTH_PROTO_L2CAP);
 	if (l2s < 0)
 		return (-1);
 
-	ctx.l2al.l2cap_len = sizeof(ctx.l2al);
-	ctx.l2al.l2cap_family = AF_BLUETOOTH;
-	ctx.l2al.l2cap_bdaddr_type = BDADDR_LE_PUBLIC; // TODO: always ??
-	bdaddr_copy(&ctx.l2al.l2cap_bdaddr, bdloca);
-	if (bind(l2s, (struct sockaddr *) &ctx.l2al, sizeof(struct sockaddr_l2cap)) < 0) {
+	ctx.l2ac.l2cap_len = sizeof(ctx.l2ac);
+	ctx.l2ac.l2cap_family = AF_BLUETOOTH;
+	ctx.l2ac.l2cap_bdaddr_type = BDADDR_LE_PUBLIC; // TODO: always ??
+	bdaddr_copy(&ctx.l2ac.l2cap_bdaddr, bdper);
+	if (bind(l2s, (struct sockaddr *) &ctx.l2ac, sizeof(ctx.l2ac)) < 0) {
 		perror("Could not bind to local address");
 		return (-1);
 	}
 
-	ctx.l2ar.l2cap_len = sizeof(ctx.l2ar);
-	ctx.l2ar.l2cap_family = AF_BLUETOOTH;
-	ctx.l2ar.l2cap_cid = NG_L2CAP_SMP_CID;
-	ctx.l2ar.l2cap_bdaddr_type = rem_addrtype;
-	//ctx.l2ar.l2cap_bdaddr_type = BDADDR_LE_RANDOM;
-	bdaddr_copy(&ctx.l2ar.l2cap_bdaddr, bdrema);
+	ctx.l2ap.l2cap_len = sizeof(ctx.l2ap);
+	ctx.l2ap.l2cap_family = AF_BLUETOOTH;
+	ctx.l2ap.l2cap_cid = NG_L2CAP_SMP_CID;
+	ctx.l2ap.l2cap_bdaddr_type = rem_addrtype;
+	bdaddr_copy(&ctx.l2ap.l2cap_bdaddr, bdper);
 
-	printf("Trying to connect to remote device\n");
-	if (connect(l2s, (struct sockaddr *) &ctx.l2ar, sizeof(struct sockaddr_l2cap)) < 0 && 
+	if (connect(l2s, (struct sockaddr *) &ctx.l2ap, sizeof(ctx.l2ap)) < 0 && 
 	    errno != EINPROGRESS) {
 	    perror("Failed to connect to l2cap socket");
 	    return (-1);
 	}
-	perror("After connect");
 	return (0);
 }
 
@@ -96,7 +94,7 @@ int find_hci_con_handle(void) {
 	}
 
 	for (int n = 0; n < r.num_connections; n++) {	
-		if (bdaddr_same(&r.connections[n].bdaddr, &ctx.l2ar.l2cap_bdaddr)) {
+		if (bdaddr_same(&r.connections[n].bdaddr, &ctx.l2ap.l2cap_bdaddr)) {
 			ctx.hci_handle = r.connections[n].con_handle;
 			ret = 0;
 			goto out;
@@ -147,7 +145,7 @@ int process_pairing_response(struct ng_l2cap_smp_pairinfo *pres) {
 	      pin = 0;
 	    }
 	  }else if(iocapmat[ctx.pres.iocap][ctx.preq.iocap]== SMP_USE_PASSKEY_R){
-	    pin = arc4random()%999999;
+	    pin = arc4random() % 1000000;
 	  }
 	  fprintf(stderr, "PIN:%u %x\n", pin, pin);
 	} else {
@@ -168,8 +166,8 @@ int send_pairing_confirm(void) {
 
 	msg_cnfrm.code = SMP_CODE_PAIRCONFIRM;
 	smp_c1b(ctx.tk, ctx.rvali, &ctx.preq, &ctx.pres,
-	       ctx.l2al.l2cap_bdaddr_type, &ctx.l2al.l2cap_bdaddr, 
-	       ctx.l2ar.l2cap_bdaddr_type, &ctx.l2ar.l2cap_bdaddr, ret);
+	       ctx.l2ac.l2cap_bdaddr_type, &ctx.l2ac.l2cap_bdaddr, 
+	       ctx.l2ap.l2cap_bdaddr_type, &ctx.l2ap.l2cap_bdaddr, ret);
 	swap128(ret, msg_cnfrm.val);
 	if (write(l2s, &msg_cnfrm, sizeof(msg_cnfrm)) < 0) {
 		perror("Failed sending confirm msg");
@@ -211,8 +209,8 @@ int process_pairing_randv(struct ng_l2cap_smp_keyinfo *pkt) {
 	uint8_t ret[16];
 	swap128(pkt->val, ctx.rvalr);
 	smp_c1b(ctx.tk, ctx.rvalr, &ctx.preq, &ctx.pres,
-	       ctx.l2al.l2cap_bdaddr_type, &ctx.l2al.l2cap_bdaddr, 
-	       ctx.l2ar.l2cap_bdaddr_type, &ctx.l2ar.l2cap_bdaddr, ret);
+	       ctx.l2ac.l2cap_bdaddr_type, &ctx.l2ac.l2cap_bdaddr, 
+	       ctx.l2ap.l2cap_bdaddr_type, &ctx.l2ap.l2cap_bdaddr, ret);
 
 	/* Validate confirm value */
 	for(int i = 0; i < 16; i++){
@@ -225,8 +223,9 @@ int process_pairing_randv(struct ng_l2cap_smp_keyinfo *pkt) {
 	return (0);
 }
 
-int start_encryption(uint16_t ediv, uint64_t rand) {
-	printf("Starting encryption\n");
+int
+start_encryption(uint16_t ediv, uint64_t rand) {
+	printf(">Starting encryption\n");
 	ng_hci_le_start_encryption_cp cp;
 	struct bt_devreq req;
 
@@ -248,10 +247,45 @@ int start_encryption(uint16_t ediv, uint64_t rand) {
 	return (0);
 }
 
-int process_pairing_cid(struct ng_l2cap_smp_cid *pkt) {
-	printf("ediv: %02x\n",pkt->ediv);
-	printf("rand: %08x\n",pkt->rand);
+int
+process_pairing_cid(struct ng_l2cap_smp_cid *pkt) {
+	printf("<Received Central Identification\n");
+	printf("\tediv: %02x\n",pkt->ediv);
+	printf("\trand: %08x\n",pkt->rand);
+	ctx.ediv = pkt->ediv;
+	ctx.cid_rand = pkt->rand;
+	return (0);
 }
+
+int 
+process_pairing_ltk(struct ng_l2cap_smp_keyinfo *pkt) {
+	printf("<Received LTK\n");
+	swap128(pkt->val, &ctx.stk);
+	return (0);
+}
+
+/* Send encryption info to peripheral. But this won't be used.
+ * Maybe just to complete command sequence?
+ * */
+int
+send_enc_info(void) {
+	struct ng_l2cap_smp_keyinfo ki;
+	struct ng_l2cap_smp_cid cid;
+	ki.code = SMP_CODE_LTK;
+	arc4random_buf(ki.val, sizeof(ki.val));
+	if (write(l2s, &ki, sizeof(ki)) < 0) {
+		perror("Failed sending ltk to peripheral");
+	}
+	
+	cid.code = SMP_CODE_CID;
+	cid.ediv = arc4random() & 0xffff;
+	arc4random_buf(&cid.rand, sizeof(cid.rand));
+	if (write(l2s, &cid, sizeof(cid)) < 0) {
+		perror("Failed sending central info to peripheral");
+	}
+	return (0);
+}
+
 
 int le_smpconnect(bdaddr_t *bdaddr, bdaddr_t *bdloc, int hci, uint8_t addrtype)
 {
@@ -287,29 +321,17 @@ int le_smpconnect(bdaddr_t *bdaddr, bdaddr_t *bdloc, int hci, uint8_t addrtype)
 				printf("\taddrtype %s;\n", (israndom)?
 				       "lernd":"lepub");
 				printf("\tediv 0x%04x;\n",ci.ediv);
+
 				cp.encrypted_diversifier = ci.ediv;
 				cp.random_number = 0;
 				for(i = 0; i < 8 ; i++){
 					cp.random_number
 						|= (((uint64_t)ci.rand[i])<<(i*8));
 				}
-				printf("\trand 0x%lx;\n", cp.random_number);
-
-				printf("\tkey 0x");
 				for(i = 0 ; i < 16; i++){
-					printf("%02x", ki.val[i]);
 					cp.long_term_key[i] = ki.val[i];
 				}
-				printf(";\n");
-				printf("\tpin nopin;\n");
-				printf("}\n");
-				arc4random_buf(ki.val, sizeof(ki.val));
-				ki.code = SMP_CODE_ENCINFO;
-				write(s, &ki, sizeof(ki));
-				ci.ediv = arc4random()&0xffff;
-				arc4random_buf(&ci.rand, sizeof(ci.rand));
-				ci.code = SMP_CODE_CENTRALINFO;
-				write(s, &ci, sizeof(ci));
+
 
 #if 0
 				sleep(4);
@@ -360,8 +382,8 @@ int main(int argc, char *argv[]) {
 
 	//smp_c1_unittest();
 	//smp_c1_unittest_b();
-	char *node = "ubt1hci";
-	bdaddr_t bd, bdloc;
+	char *node = "ubt0hci";
+	bdaddr_t bdper, bdcen;
 	int ch;
 	uint8_t addrtype = BDADDR_LE_PUBLIC;
 	uint8_t buf[512]; // TODO: max size?
@@ -386,22 +408,22 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "Not enough arguments\n");
 	}
 
-	if (bt_devaddr(node, &bdloc) < 1) {
+	if (bt_devaddr(node, &bdcen) < 1) {
 		perror("Failed to get address of local node");
 		return (-1);
 	}
-	if (!bt_aton(argv[0], &bd)) {
+	if (!bt_aton(argv[0], &bdper)) {
 		fprintf(stderr, "Invalid remote address\n");
 		return (-1);
 	}
 	
-	printf("Opening %s with address %s\n", node, bt_ntoa(&bdloc, NULL));
+	printf("Opening %s with address %s\n", node, bt_ntoa(&bdcen, NULL));
 	if ((hs = bt_devopen(node)) < 1) {
 		fprintf(stderr, "Failed opening local node\n");
 		return (-1);
 	}
 
-	if (l2connect(&bd, &bdloc, 0, addrtype) < 0) {
+	if (l2connect(&bdper, &bdcen, addrtype) < 0) {
 		fprintf(stderr, "Failed connecting to remote.\n");
 		return (-1);
 		goto out;
@@ -435,7 +457,10 @@ int main(int argc, char *argv[]) {
 	       } else if (buf[0] == SMP_CODE_CID) {
 	       		process_pairing_cid((struct ng_l2cap_smp_cid*)buf);
 	       } else if (buf[0] == SMP_CODE_LTK) {
-		       printf("Received LTK msg\n");
+		       process_pairing_ltk((struct ng_l2cap_smp_keyinfo*)buf);
+			//start_encryption(ctx.ediv, ctx.cid_rand);
+			send_enc_info();
+			goto out;
 	       } else {
 	       	printf("Unknown code: %d\n", buf[0]);
 	       	return (-1);
