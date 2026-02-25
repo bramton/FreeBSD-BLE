@@ -8,15 +8,15 @@
 #include <stdio.h>
 #include <string.h>
 
-int
+//int
+//smp_e(const uint8_t *k,const uint8_t *data, uint8_t *out) {
+//	AES_KEY key;
+//	AES_set_encrypt_key(k, 128, &key);
+//	AES_ecb_encrypt(data, out, &key, AES_ENCRYPT);
+//	return 0;
+//}
+//int
 smp_e(const uint8_t *k,const uint8_t *data, uint8_t *out) {
-	AES_KEY key;
-	AES_set_encrypt_key(k, 128, &key);
-	AES_ecb_encrypt(data, out, &key, AES_ENCRYPT);
-	return 0;
-}
-int
-smp_eb(const uint8_t *k,const uint8_t *data, uint8_t *out) {
 	EVP_CIPHER_CTX *cctx;
 	cctx = EVP_CIPHER_CTX_new();
 	int outlen;
@@ -73,15 +73,6 @@ int smp_c1b(const uint8_t *k, const uint8_t *r,
 		tmp[i] = ret[i] ^ p2[i]; 
 	}
 	smp_e(k, tmp, ret); 
-	for (int i = 0; i < 16; i++) {
-		printf("%02x ", ret[i]);
-	}
-	printf("\n");
-	smp_eb(k, tmp, ret); 
-	for (int i = 0; i < 16; i++) {
-		printf("%02x ", ret[i]);
-	}
-	printf("\n");
 
 	return (0);
 }

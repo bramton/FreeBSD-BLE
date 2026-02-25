@@ -97,7 +97,6 @@ static uint8_t iocapmat[5][5] ={
 };
 
 int smp_e(const uint8_t*, const uint8_t*, uint8_t*);
-int smp_eb(const uint8_t*, const uint8_t*, uint8_t*);
 int smp_s1(const uint8_t*, const uint8_t*, const uint8_t*, uint8_t*);
 
 /* Confirm value generation function for LE legacy pairing */

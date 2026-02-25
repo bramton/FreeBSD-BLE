@@ -49,7 +49,7 @@ struct smp_ctx ctx;
 int l2s, hs; /* l2cap socket and hci socket */
 
 int
-l2connect(bdaddr_t *bdper, bdaddr_t *bdcen, uint8_t rem_addrtype) {
+l2connect(bdaddr_t *bdcen, bdaddr_t *bdper, uint8_t rem_addrtype) {
 	l2s = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BLUETOOTH_PROTO_L2CAP);
 	if (l2s < 0)
 		return (-1);
@@ -57,7 +57,7 @@ l2connect(bdaddr_t *bdper, bdaddr_t *bdcen, uint8_t rem_addrtype) {
 	ctx.l2ac.l2cap_len = sizeof(ctx.l2ac);
 	ctx.l2ac.l2cap_family = AF_BLUETOOTH;
 	ctx.l2ac.l2cap_bdaddr_type = BDADDR_LE_PUBLIC; // TODO: always ??
-	bdaddr_copy(&ctx.l2ac.l2cap_bdaddr, bdper);
+	bdaddr_copy(&ctx.l2ac.l2cap_bdaddr, bdcen);
 	if (bind(l2s, (struct sockaddr *) &ctx.l2ac, sizeof(ctx.l2ac)) < 0) {
 		perror("Could not bind to local address");
 		return (-1);
@@ -239,7 +239,7 @@ start_encryption(uint16_t ediv, uint64_t rand) {
 	req.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE, NG_HCI_OCF_LE_START_ENCRYPTION);
 	req.cparam = &cp;
 	req.clen = sizeof(cp);
-	if (bt_devreq(hs, &req, 10) < 0) {
+	if (bt_devreq(hs, &req, 10) < 0) { // TODO: why timeout??
 		perror("Could not start encryption");
 		return (-1);
 	}
@@ -251,7 +251,7 @@ int
 process_pairing_cid(struct ng_l2cap_smp_cid *pkt) {
 	printf("<Received Central Identification\n");
 	printf("\tediv: %02x\n",pkt->ediv);
-	printf("\trand: %08x\n",pkt->rand);
+	printf("\trand: %08lx\n",pkt->rand);
 	ctx.ediv = pkt->ediv;
 	ctx.cid_rand = pkt->rand;
 	return (0);
@@ -260,7 +260,7 @@ process_pairing_cid(struct ng_l2cap_smp_cid *pkt) {
 int 
 process_pairing_ltk(struct ng_l2cap_smp_keyinfo *pkt) {
 	printf("<Received LTK\n");
-	swap128(pkt->val, &ctx.stk);
+	swap128(pkt->val, ctx.stk);
 	return (0);
 }
 
@@ -286,98 +286,8 @@ send_enc_info(void) {
 	return (0);
 }
 
-
-int le_smpconnect(bdaddr_t *bdaddr, bdaddr_t *bdloc, int hci, uint8_t addrtype)
-{
-	/*
-
-		{
-			uint8_t mr[16], sr[16],stk[16];
-			{
-				struct ng_l2cap_smp_keyinfo ki;
-				struct ng_l2cap_smp_centralinfo ci;
-				ng_hci_le_start_encryption_cp cp;
-				
-				uint8_t pkt[30];
-				int encok=0, mok=0;
-				
-				while(encok==0||mok==0){
-					read(s, pkt, sizeof(pkt));
-					switch(pkt[0]){
-					case SMP_CODE_CENTRALINFO:
-						mok=1;
-						bcopy(pkt, &ci,sizeof(ci));
-						break;
-					case SMP_CODE_ENCINFO:
-						encok=1;
-						bcopy(pkt,&ki, sizeof(ki));
-						break;
-						
-					}
-				}
-				printf("device{\n");
-				printf("\tname \"thisdevice\";\n ");
-				printf("\tbdaddr %s;\n", bt_ntoa(bdaddr, NULL));
-				printf("\taddrtype %s;\n", (israndom)?
-				       "lernd":"lepub");
-				printf("\tediv 0x%04x;\n",ci.ediv);
-
-				cp.encrypted_diversifier = ci.ediv;
-				cp.random_number = 0;
-				for(i = 0; i < 8 ; i++){
-					cp.random_number
-						|= (((uint64_t)ci.rand[i])<<(i*8));
-				}
-				for(i = 0 ; i < 16; i++){
-					cp.long_term_key[i] = ki.val[i];
-				}
-
-
-#if 0
-				sleep(4);
-				cp.connection_handle = handle;
-				n = sizeof(cp);
-				hci_request(hci, NG_HCI_OPCODE(NG_HCI_OGF_LE
-							       ,NG_HCI_OCF_LE_START_ENCRYPTION),
-					    (char *)&cp, sizeof(cp), (char *)&rp, &n);
-				sleep(30);
-#endif
-			}
-			
-				
-		}
-
-#if 0
-		{
-			ng_hci_le_connection_update_cp cp = {
-				.connection_handle = handle,
-				.conn_interval_min = htobs(6),
-				.conn_interval_max = htobs(7),
-				.conn_latency = htobs(0),
-				.supervision_timeout = htobs(0xc80),
-				.minimum_ce_length = htobs(1),
-				.maximum_ce_length = htobs(1)
-			};
-			ng_hci_status_rp rp;
-
-			int n = sizeof(cp);
-			hci_request(hci, NG_HCI_OPCODE(NG_HCI_OGF_LE, NG_HCI_OCF_LE_CONNECTION_UPDATE),
-				    (char *)&cp, sizeof(cp), (char *)&rp, &n);
-		}
-#endif
-
-	fail:
-		if(ng){
-			failed.code = SMP_CODE_PAIRFAIL;
-			failed.reason = 4;
-			write(s, &failed, sizeof(failed));
-		}
-	}
-	return 0;
-	*/
-}
-
-int main(int argc, char *argv[]) {
+int
+main(int argc, char *argv[]) {
 	memset(&ctx, 0, sizeof(ctx));
 
 	//smp_c1_unittest();
@@ -388,11 +298,16 @@ int main(int argc, char *argv[]) {
 	uint8_t addrtype = BDADDR_LE_PUBLIC;
 	uint8_t buf[512]; // TODO: max size?
 	 ssize_t len;
+	time_t t_end;
+	time_t to = 30; /* Time-out (s) */
 	
-	while((ch = getopt(argc, argv, "r")) != -1){
+	while((ch = getopt(argc, argv, "n:r")) != -1){
 		switch(ch){
 		case 'r':
 			addrtype = BDADDR_LE_RANDOM;
+			break;
+		case 'n':
+			node = optarg;
 			break;
 		default:
 			fprintf(stderr, "Usage: %s [-r] bdaddr\n", argv[0]);
@@ -404,16 +319,18 @@ int main(int argc, char *argv[]) {
 	argc -= optind;
 	argv += optind;
 	
-	if(argc <= 0){
+	if(argc <= 0) {
 		fprintf(stderr, "Not enough arguments\n");
+		return (-1);
 	}
 
 	if (bt_devaddr(node, &bdcen) < 1) {
 		perror("Failed to get address of local node");
 		return (-1);
 	}
+
 	if (!bt_aton(argv[0], &bdper)) {
-		fprintf(stderr, "Invalid remote address\n");
+		fprintf(stderr, "Invalid peripheral address\n");
 		return (-1);
 	}
 	
@@ -423,7 +340,7 @@ int main(int argc, char *argv[]) {
 		return (-1);
 	}
 
-	if (l2connect(&bdper, &bdcen, addrtype) < 0) {
+	if (l2connect(&bdcen, &bdper, addrtype) < 0) {
 		fprintf(stderr, "Failed connecting to remote.\n");
 		return (-1);
 		goto out;
@@ -435,7 +352,9 @@ int main(int argc, char *argv[]) {
 	}
 
 	send_pairing_request();
-	for (;;) {
+	t_end = time(NULL) + to;
+	do {
+		to = t_end - time(NULL);
 		len = read(l2s, &buf, sizeof(buf));
 	       if (len < 0) {
 	       	perror("Error reading from l2cap socket");
@@ -454,20 +373,21 @@ int main(int argc, char *argv[]) {
 	       	process_pairing_randv((struct ng_l2cap_smp_keyinfo*)buf);
 		smp_s1(ctx.tk, ctx.rvalr, ctx.rvali, ctx.stk);
 		start_encryption(0, 0);
-	       } else if (buf[0] == SMP_CODE_CID) {
-	       		process_pairing_cid((struct ng_l2cap_smp_cid*)buf);
 	       } else if (buf[0] == SMP_CODE_LTK) {
 		       process_pairing_ltk((struct ng_l2cap_smp_keyinfo*)buf);
 			//start_encryption(ctx.ediv, ctx.cid_rand);
+	       } else if (buf[0] == SMP_CODE_CID) {
+	       		process_pairing_cid((struct ng_l2cap_smp_cid*)buf);
 			send_enc_info();
 			goto out;
 	       } else {
-	       	printf("Unknown code: %d\n", buf[0]);
+	       	fprintf(stderr, "Received unknown code: %d\n", buf[0]);
 	       	return (-1);
 	       	goto out;
 	       }
 	       memset(buf, 0, sizeof(buf));
-	}
+	} while (to > 0);
+	errno = ETIMEDOUT;
 
 out:
 	 close(l2s);
