@@ -5,8 +5,8 @@
  */
 
 #include <sys/types.h>
-#include <sys/ioctl.h>
 #include <sys/fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/sysctl.h>
 #include <sys/bitstring.h>
 #include <sys/select.h>
@@ -18,7 +18,6 @@
 #include <netgraph/ng_message.h>
 #include <netgraph/bluetooth/include/ng_hci.h>
 
-#include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,7 +25,6 @@
 #include <unistd.h>
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>
-#include "hccontrol.h"
 #include "l2cap_smp.h"
 
 int timeout = 30;
@@ -77,7 +75,7 @@ l2connect(bdaddr_t *bdcen, bdaddr_t *bdper, uint8_t rem_addrtype) {
 	return (0);
 }
 
-/* Copied from hccontrol/node.c Should actually be from getsockopt?  */
+/* Copied from hccontrol/node.c Should actually be implemented as getsockopt?  */
 int find_hci_con_handle(void) {
 	struct ng_btsocket_hci_raw_con_list r;
  	int ret = -1;

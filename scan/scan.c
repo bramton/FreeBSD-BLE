@@ -78,23 +78,28 @@ parse_adv_report_pkt(ng_hci_le_advertising_report_ep *pkt) {
 
 		ar.ads = (struct ad_t *)malloc(ads_length*sizeof(struct ad_t));
 		for (int i = 0; i < ads_length; i++) {
-			ad_length = *p++;
-			ar.ads[i].length = ad_length;
+			ad_length = *p++ - 1; /* AD type is included in length */
+			ar.ads[i].length = ad_length; 
 			ad_type = *p++;
 			ar.ads[i].type = ad_type;
-			ar.ads[i].data = (uint8_t *)malloc(ad_length - 1);
-			memcpy(ar.ads[i].data, p, ad_length - 1);
-			p += (ad_length - 1);
+			ar.ads[i].data = (uint8_t *)malloc(ad_length);
+			memcpy(ar.ads[i].data, p, ad_length);
+			p += ad_length;
+			printf("     Data type: %02x (len: %d)\n", ad_type, ad_length);
 			if (ad_type == 0x0a) {
-				printf("     Tx power: %d dBm\n", (int8_t)(ar.ads[i].data[0]));
+				printf("       Tx power: %d dBm\n", (int8_t)(ar.ads[i].data[0]));
 			}
 			else if (ad_type == 0x09) {
-				char *str = (char *)malloc(ad_length);
-				strlcpy(str, (char *)ar.ads[i].data, ad_length-1);
-				printf("     name: %s\n", str);
+				char *str = (char *)malloc(ad_length + 1); /* One extra for \n */
+				strlcpy(str, (char *)ar.ads[i].data, ad_length);
+				printf("       name: %s\n", str);
 			}
 			else {
-				printf("     Data type: %02x (len: %d)\n", ad_type, ad_length);
+				printf("       data: ");
+				for (int j = 0; j < ad_length; j++) {
+					printf("%02x ", ar.ads[i].data[j]);
+				}
+				printf("\n");
 			}
 		}
 		ar.rssi = (int8_t)*p++;
@@ -127,7 +132,7 @@ int
 main(int argc, char *argv[]) {
 	uint8_t buf[512];
 	int s, n;
-	char *node = "ubt1hci";
+	char *node = "ubt0hci";
 	ng_hci_event_pkt_t *hdr;
 	ng_hci_le_ep *lep;
 

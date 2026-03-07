@@ -3,6 +3,12 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
+#ifndef _ATT_H_
+#define _ATT_H_
+
+#include <sys/types.h>
+
+#include <uuid.h>
 
 #define ATT_OP_ERR 1
 #define ATT_OP_MTU_REQ 2
@@ -40,6 +46,14 @@ le_att_opcode {
 	uint8_t authsig_flag : 1;
 };
 
+struct le_attreq {
+	struct le_att_opcode opcode;
+	void *cparam;
+	size_t clen;
+	void *rparam;
+	size_t rlen;
+};
+
 struct __attribute__((packed))
 le_att_read_group_req_short {
 	uint16_t start;
@@ -54,12 +68,8 @@ le_att_read_group_req_long {
 	uuid_t handle;
 };
 
-int le_attreq(int s, struct bt_attreq *r, time_t to);
-int le_att_write(int s,unsigned char *buf,size_t size);
-int le_att_read(int s, unsigned char *buf, size_t size);
 
-int
-le_attreq(int s, bt_attreq *r, time_t to) {
-	uint8_t buf[255];
-	struct le_att_opcode *opcode = (struct le_att_opcode *)buf;
-}
+int le_attsend(int s, struct le_att_opcode oc, void *param, size_t plen);
+int le_attreq(int s, struct le_attreq *r, time_t to);
+
+#endif /* _ATT_H_ */
