@@ -39,15 +39,10 @@
 #define ATT_OP_HANDLE_CFM 0x1e
 #define ATT_OP_MULTI_HANDLE_NTF 0x23
 
-struct __attribute__((packed))
-le_att_opcode {
-	uint8_t method : 6;
-	uint8_t cmd_flag : 1;
-	uint8_t authsig_flag : 1;
-};
+#define ATT_OPC_METHOD_MSK 0x3f
 
 struct le_attreq {
-	struct le_att_opcode opcode;
+	uint8_t opcode;
 	void *cparam;
 	size_t clen;
 	void *rparam;
@@ -55,21 +50,28 @@ struct le_attreq {
 };
 
 struct __attribute__((packed))
+le_att_find_info_req {
+	uint16_t start;
+	uint16_t end;
+};
+
+struct __attribute__((packed))
 le_att_read_group_req_short {
 	uint16_t start;
 	uint16_t end;
-	uint16_t handle;
+	uint16_t type;
 };
 
 struct __attribute__((packed))
 le_att_read_group_req_long {
 	uint16_t start;
 	uint16_t end;
-	uuid_t handle;
+	uuid_t type;
 };
 
 
-int le_attsend(int s, struct le_att_opcode oc, void *param, size_t plen);
+int le_attsend(int s, uint8_t opc, void *param, size_t plen);
+int le_attrecv(int s, void *buf, size_t len, time_t to);
 int le_attreq(int s, struct le_attreq *r, time_t to);
 
 #endif /* _ATT_H_ */
