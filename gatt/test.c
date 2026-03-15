@@ -1,11 +1,13 @@
-#include "att.h"
-#include "gatt.h"
+#include <sys/socket.h>
 
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <bluetooth.h>
 #define L2CAP_SOCKET_CHECKED
+
+#include "att.h"
+#include "gatt.h"
 
 int
 main(int argc, char *argv[]) {
@@ -15,6 +17,10 @@ main(int argc, char *argv[]) {
 	uint8_t addrtype = BDADDR_LE_PUBLIC;
 	int ch;
 	char *node = "ubt0hci";
+	uint16_t imtu, omtu;
+	size_t len;
+	struct le_attreq req;
+	struct le_att_exchange_mtu_msg mtu_msg, mtu_rsp;
 
 	while((ch = getopt(argc, argv, "n:r")) != -1){
 		switch(ch){
@@ -74,8 +80,32 @@ main(int argc, char *argv[]) {
 	    return (-1);
 	}
 
-	printf("After connection\n");
-	struct le_attreq req;
+	len = sizeof(imtu);
+	if (getsockopt(l2s, SOL_L2CAP, SO_L2CAP_IMTU, &imtu, &len) < -1) {
+		perror("Failed to get l2cap imtu");
+		return(-1);
+	}
+	printf("imtu: %d\n", imtu);
+
+	len = sizeof(omtu);
+	if (getsockopt(l2s, SOL_L2CAP, SO_L2CAP_OMTU, &omtu, &len) < -1) {
+		perror("Failed to get l2cap omtu");
+		return(-1);
+	}
+	printf("omtu: %d\n", omtu);
+
+	mtu_msg.mtu_size = imtu;
+	memset(&req, 0, sizeof(req));
+	req.opcode  = ATT_OP_MTU_REQ;
+	req.cparam = &mtu_msg;
+	req.clen = sizeof(mtu_msg);
+	req.rparam = &mtu_rsp;
+	req.rlen = sizeof(mtu_rsp);
+	if (le_attreq(l2s, &req, 30) < 0) {
+		perror("att req fail");
+		return (-1);
+	}
+
 	struct le_att_read_group_req_short pkt;
 	req.opcode= ATT_OP_READ_GROUP_REQ;
 	pkt.start = 0x0001;

@@ -49,6 +49,12 @@ struct le_attreq {
 	size_t rlen;
 };
 
+/* Used by both the request and response */
+struct __attribute__((packed))
+le_att_exchange_mtu_msg{
+	uint16_t mtu_size;
+};
+
 struct __attribute__((packed))
 le_att_find_info_req {
 	uint16_t start;

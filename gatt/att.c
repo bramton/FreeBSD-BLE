@@ -31,6 +31,7 @@ le_attreq(int s, struct le_attreq *r, time_t to) {
 	       	return (-1);
 	}
 
+	printf("After send\n");
        	if ((r->rlen == 0 && r->rparam != NULL) ||
 	    (r->rlen > 0 && r->rparam == NULL)) {
 		errno = EINVAL;
@@ -58,8 +59,10 @@ le_attreq(int s, struct le_attreq *r, time_t to) {
 
 		printf("Before method check\n");
 		printf("method: %02x\n", (buf[0]));
+		printf("method: %02x\n", (*opc & ATT_OPC_METHOD_MSK));
+		printf("method: %02x\n", ((r->opcode & ATT_OPC_METHOD_MSK) + 1));
 		printf("blablabla\n");
-		if (*opc & ATT_OPC_METHOD_MSK != ((r->opcode & ATT_OPC_METHOD_MSK) + 1)) {
+		if ((*opc & ATT_OPC_METHOD_MSK) != ((r->opcode & ATT_OPC_METHOD_MSK) + 1)) {
 			printf("ERROR\n");
 			error = EIO;
 			goto out;
@@ -68,8 +71,10 @@ le_attreq(int s, struct le_attreq *r, time_t to) {
 		printf("Received something (%d):", n);
 		n -= sizeof(*opc);
 		printf("Received something (%d):", n);
-		r->rlen = n;
-		memcpy(r->rparam, opc + 1, r->rlen);
+		if (r->rlen >= n) {
+			r->rlen = n;
+			memcpy(r->rparam, opc + 1, r->rlen);
+		}
 
 		printf("Received something (%d):", r->rlen);
 		for (int i = 0; i < n; i++) {
@@ -78,9 +83,6 @@ le_attreq(int s, struct le_attreq *r, time_t to) {
 		printf("\n");
 
 	} while (to > 0);
-
-
-
 
 out:
 	if (error != 0) {
